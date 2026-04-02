@@ -1,5 +1,5 @@
 ---
-name: asky-release-notes
+name: release-notes
 description: "Write release notes for Ask-Y platform after a stage-to-master merge. Researches git history across all repos, identifies the previous version, collects all PRs and commits, reads checked-in docs, asks the user for highlights, then writes structured release notes and a Slack announcement. Triggers on: release notes, write release notes, version notes, changelog, new version, what changed."
 ---
 
