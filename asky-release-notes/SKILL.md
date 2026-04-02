@@ -1,5 +1,5 @@
 ---
-name: release-notes
+name: asky-release-notes
 description: "Write release notes for Ask-Y platform after a stage-to-master merge. Researches git history across all repos, identifies the previous version, collects all PRs and commits, reads checked-in docs, asks the user for highlights, then writes structured release notes and a Slack announcement. Triggers on: release notes, write release notes, version notes, changelog, new version, what changed."
 ---
 
@@ -28,67 +28,52 @@ Note: asky-lib uses `main` not `master`.
 
 ## STEP 1: Identify the Previous Version
 
-Read the most recent release notes file in jamback to find the previous version number and its date:
+Find and read the most recent release notes file in jamback:
 
 ```bash
 ls -t /c/work/asky/jam/jamback/RELEASE_NOTES_v*.md | head -5
 ```
 
 Read the latest one to get:
-- The **version number** (e.g., v2.3 → next is v2.4)
+- The **version number** (to derive the next version)
 - The **release date** (this is the start date for the new changelog)
-- The **format and structure** to follow
+- The **format and structure** to follow — match it exactly
 
 ## STEP 2: Find the Last Merge Date
 
-Find when stage was last merged to master/main before the current merge in each repo:
+For each repo, find the two most recent "Merge branch 'stage'" commits on the target branch. The date of the second-most-recent merge is where the new changelog starts.
 
-**jamback:**
 ```bash
-cd /c/work/asky/jam/jamback && git log master --oneline --date=short --pretty=format:"%h %ad %s" -50
+# For each repo, find merge commits on the target branch
+cd <REPO_PATH> && git log <TARGET_BRANCH> --oneline --date=short --pretty=format:"%h %ad %s" -50
 ```
 
-**prismfront:**
-```bash
-cd /c/work/asky/prism/prismfront && git log master --oneline --date=short --pretty=format:"%h %ad %s" -50
-```
+Where `<TARGET_BRANCH>` is `master` for jamback/prismfront and `main` for asky-lib.
 
-**asky-lib:**
-```bash
-cd /c/work/asky-workspaces/asky-lib && git log main --oneline --date=short --pretty=format:"%h %ad %s" -50
-```
-
-Look for the merge commit just before the latest "Merge branch 'stage'" — the date of the second-most-recent merge is where the new changelog starts.
+Look for lines containing "Merge branch 'stage'" or "Merge branch 'stage' into". The most recent one is the current release merge. The one before it is the previous release — use that date as the changelog start.
 
 ## STEP 3: Collect All Changes
 
-For each repo, get the full commit log since the last merge date. Run all three in parallel:
+For each repo, get the full commit log on the `stage` branch since the last merge date. Run all three repos in parallel:
 
-**All commits (for detail):**
 ```bash
-cd /c/work/asky/jam/jamback && git log stage --since="YYYY-MM-DD" --date=short --pretty=format:"%h %ad %s"
-```
+# All commits (for detail)
+cd <REPO_PATH> && git log stage --since="<START_DATE>" --date=short --pretty=format:"%h %ad %s"
 
-**PR merges only (for structure):**
-```bash
-cd /c/work/asky/jam/jamback && git log stage --since="YYYY-MM-DD" --merges --oneline --date=short --pretty=format:"%h %ad %s"
-```
+# PR merges only (for structure)
+cd <REPO_PATH> && git log stage --since="<START_DATE>" --merges --oneline --date=short --pretty=format:"%h %ad %s"
 
-Repeat for prismfront and asky-lib with their respective paths.
-
-**Count totals for the summary:**
-```bash
-# Per repo: commit count and PR count
-git log stage --since="YYYY-MM-DD" --oneline | wc -l
-git log stage --since="YYYY-MM-DD" --merges --grep="Merge pull request" --oneline | wc -l
+# Count totals
+git log stage --since="<START_DATE>" --oneline | wc -l
+git log stage --since="<START_DATE>" --merges --grep="Merge pull request" --oneline | wc -l
 ```
 
 ## STEP 4: Read Checked-In Documentation
 
-Find and read any new or updated docs since the last release:
+Find and read any new or updated markdown docs since the last release:
 
 ```bash
-cd /c/work/asky/jam/jamback && find . -name "*.md" -newer RELEASE_NOTES_v{PREV}.md -not -path "./.git/*"
+cd /c/work/asky/jam/jamback && find . -name "*.md" -newer <PREVIOUS_RELEASE_NOTES_FILE> -not -path "./.git/*"
 ```
 
 **Read every doc found.** These contain detailed architectural descriptions of new features and are critical for writing accurate release notes. Key docs are typically in `./docs/`.
@@ -100,23 +85,23 @@ ls /c/work/asky-workspaces/asky-lib/riffml/prism/
 ls /c/work/asky-workspaces/asky-lib/riffml/prism/Agents/
 ```
 
-If a new agent version directory exists (e.g., `prism5/` when previous was `prism4/`), note this as a major change.
+Look for new agent version directories (e.g., a new `prismN/` folder that didn't exist before) — these indicate a major agent framework upgrade.
 
 ## STEP 5: Write the Full Changelog File
 
-Before writing release notes, dump the raw commit log to a file for reference:
+Before writing release notes, dump the raw commit log to a reference file.
 
 Create `v{VERSION}_full_changelog.md` in the jamback repo root with all commits from all three repos, organized by repo:
 
 ```
-=== JAMBACK (Backend) - Commits since YYYY-MM-DD ===
+=== JAMBACK (Backend) - Commits since <START_DATE> ===
 - hash date | commit message
 ...
 
-=== PRISMFRONT (Frontend) - Commits since YYYY-MM-DD ===
+=== PRISMFRONT (Frontend) - Commits since <START_DATE> ===
 ...
 
-=== ASKY-LIB (RiffML Agent Instructions) - Commits since YYYY-MM-DD ===
+=== ASKY-LIB (RiffML Agent Instructions) - Commits since <START_DATE> ===
 ...
 ```
 
@@ -197,7 +182,7 @@ For the detailed commit-by-commit changelog, see `v{VERSION}_full_changelog.md`.
 - **Bug Fixes**: Simple bullet list, each starting with "Fixed". No need to explain the root cause.
 - **Technical Updates**: Internal changes relevant to developers. Group by Dependencies, Architecture, and RiffML.
 - **Tone**: Professional but approachable. Describe what the feature does for the user, not just what was coded.
-- **Naming**: Use the product terminology the user confirms (e.g., "Skills" not "Knowledge Books", "Prisms" not "Views").
+- **Naming**: Use the product terminology the user confirms. When you see renames in git history (e.g., "X" renamed to "Y"), always use the newest name.
 - **Infrastructure features**: If the user says something is infra-only, mention it but note it's laying groundwork for the next version.
 
 ## STEP 8: Write the Slack Announcement
@@ -235,25 +220,7 @@ Plus: {quick list of smaller improvements}.
 ~{N} commits, {M} PRs. Nice work everyone! 🚀
 ```
 
-## COMMON PATTERNS TO LOOK FOR IN GIT LOGS
-
-When analyzing commits, look for these patterns to identify features:
-
-| Pattern in Commits | Likely Feature |
-|---|---|
-| "knowledge book" → "skill" renames | Rebranding/redesign |
-| "widget", "iteration", "DAG" | Agent visualization |
-| "web search", "tavily", "brave" | Web search integration |
-| "prompts library", "resolve-references" | Prompt management |
-| "connector", "connected tables" | Database connectors |
-| "prism5", "prism6", etc. | Agent framework upgrade |
-| "replay", "flow view" | Debugger improvements |
-| "e2e", "data-qa", "test" | Testing infrastructure |
-| "semantic", "unification" | Data modeling features |
-| "streaming", "progress" | UX improvements |
-| "report", "dynamic" | Reporting features |
-
 ## VERSION NUMBERING
 
-- Major features (new agent framework, new UI paradigm) → bump minor version (2.3 → 2.4)
+- Major features (new agent framework, new UI paradigm) → bump minor version (e.g., 2.3 → 2.4)
 - The user will confirm the version number, but default to incrementing the minor version by 0.1
