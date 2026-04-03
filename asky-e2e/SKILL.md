@@ -1,7 +1,7 @@
 ---
 name: asky-e2e
-description: Automate Asky data analytics platform UI testing using Claude Chrome extension (MCP browser tools). Covers login, project management, file upload, chat interaction, explorer navigation, table data reading, and assertions. Use when testing the Asky platform via browser automation instead of Playwright.
-trigger: when the user wants to test or automate the Asky platform UI, prism, or interact with asky app, run tests on asky, or automate browser actions on the stage.ask-y.ai site or when the user says, test this prism flow
+description: Automate Asky data analytics platform UI testing using Claude Chrome extension (MCP browser tools). Covers login, project management, file upload, chat interaction, explorer navigation, table data reading, report creation/editing, and assertions. Use when testing the Asky platform via browser automation instead of Playwright.
+trigger: when the user wants to test or automate the Asky platform UI, prism, reports, or interact with asky app, run tests on asky, or automate browser actions on the stage.ask-y.ai site or when the user says, test this prism flow, test reports
 ---
 
 # Asky E2E Browser Automation Skill
@@ -388,7 +388,13 @@ document.querySelector('[data-qa="semantic-status"]')?.textContent?.trim() === '
 10. CLICK ACCEPT ALL (if changes proposed)
 11. EXPAND ALL EXPLORER ITEMS
 12. READ EXCEL/PRISM TREES → verify results
-13. DELETE PROJECT (cleanup)
+13. CREATE REPORT → verify in explorer
+14. RENAME REPORT → verify title updated
+15. INSERT BLOCKS (paragraph, header, list, table, html, prism, vega)
+16. READ REPORT BLOCKS → verify block types and count
+17. COPY PRISM/VIZ TO REPORT (if prism/viz open)
+18. DELETE REPORT → verify removed from explorer
+19. DELETE PROJECT (cleanup)
 ```
 
 ## TIMING REFERENCE (stage.ask-y.ai, verified)
@@ -430,6 +436,356 @@ document.querySelector('[data-qa="semantic-status"]')?.textContent?.trim() === '
 | `.delete-project-btn` | Delete project (on hover) |
 | `.project-item` | Project in list |
 | `.session-item` | Session in list |
+| `[data-qa="explorer-reports-add"]` | Add new report button |
+| `[data-qa="explorer-reports-expand"]` | Expand/collapse reports list |
+| `[data-qa="explorer-report-item"]` | Report item in explorer list |
+| `[data-qa="prism-copy-report-button"]` | Copy prism to report (clipboard) |
+| `[data-qa="viz-copy-report-button"]` | Copy visualization to report (clipboard) |
+| `.report-title-input` | Report title input |
+| `.report-title-bar .delete-btn` | Delete report (editor) |
+| `.report-title-bar .refresh-btn` | Refresh data (editor) |
+| `.report-title-bar .download-btn` | Download PDF (editor) |
+| `.text-btn.new-btn` | New report (editor) |
+| `.reports-explorer` | Reports explorer container |
+| `.report-name` | Report name text (inside item) |
+| `.html-block-preview` | HTML block preview (click to edit) |
+| `.html-block-editor` | HTML block textarea (edit mode) |
+| `#editorjs` | EditorJS container |
+
+---
+
+## 16. CREATE REPORT
+
+**Verified working.** Clicks the "+" button in the Reports explorer section.
+
+```javascript
+// Click Add Report button in the explorer
+document.querySelector('[data-qa="explorer-reports-add"]')?.click();
+// Wait 3s for report to be created and editor to open
+```
+
+**Verify**: Report editor opens on the right side with title "New Report" and EditorJS placeholder.
+```javascript
+document.querySelector('.report-title-input')?.value // Should be 'New Report'
+```
+
+---
+
+## 17. RENAME REPORT
+
+**Verified working.** Updates the title input using Angular-compatible value setter.
+
+```javascript
+const titleInput = document.querySelector('.report-title-input');
+titleInput.focus();
+titleInput.select();
+const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+nativeInputValueSetter.call(titleInput, 'YOUR_REPORT_NAME');
+titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+titleInput.dispatchEvent(new Event('change', { bubbles: true }));
+titleInput.blur(); // triggers save
+```
+
+---
+
+## 18. SELECT REPORT (Open Existing)
+
+**Verified working.** Clicks a report item in the explorer by name.
+
+```javascript
+const items = document.querySelectorAll('[data-qa="explorer-report-item"]');
+for (const item of items) {
+  if (item.querySelector('.report-name')?.textContent?.trim() === 'REPORT_NAME') {
+    item.click();
+    break;
+  }
+}
+// Wait 2s for editor to load content
+```
+
+---
+
+## 19. DELETE REPORT (from Explorer)
+
+**Verified working.** Hover the report item to reveal delete button, click it, confirm in dialog.
+
+```javascript
+// Step 1: Find report item and trigger hover + click delete
+const items = document.querySelectorAll('[data-qa="explorer-report-item"]');
+for (const item of items) {
+  if (item.querySelector('.report-name')?.textContent?.trim() === 'REPORT_NAME') {
+    item.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    setTimeout(() => item.querySelector('.delete-btn')?.click(), 300);
+    break;
+  }
+}
+// Wait 1s for confirmation dialog
+
+// Step 2: Confirm deletion in dialog
+const btns = document.querySelectorAll('mat-dialog-actions button, .mat-mdc-dialog-actions button');
+for (const b of btns) { if (b.textContent.trim() === 'Delete') { b.click(); break; } }
+// Wait 2s
+```
+
+---
+
+## 20. DELETE REPORT (from Editor Title Bar)
+
+**Verified working.** Uses the delete button in the report editor's title bar.
+
+```javascript
+// Click delete button in title bar
+document.querySelector('.report-title-bar .delete-btn')?.click();
+// Wait 1s for confirmation dialog
+
+// Confirm deletion
+const btns = document.querySelectorAll('mat-dialog-actions button, .mat-mdc-dialog-actions button');
+for (const b of btns) { if (b.textContent.trim() === 'Delete') { b.click(); break; } }
+// Wait 2s
+```
+
+---
+
+## 21. INSERT REPORT BLOCKS (via EditorJS API)
+
+**Verified working.** Access the EditorJS instance through the Angular component to insert blocks programmatically.
+
+### Helper: Get EditorJS instance
+```javascript
+// Reusable helper to get the editor instance
+(async () => {
+  const editorHolder = document.getElementById('editorjs');
+  const ng = window.ng;
+  let reportComp = null;
+  let el = editorHolder;
+  while (el && !reportComp) {
+    try { const c = ng.getComponent(el); if (c && c.editor) { reportComp = c; break; } } catch(e) {}
+    el = el.parentElement;
+  }
+  if (reportComp && reportComp.editor) {
+    const editor = reportComp.editor;
+    // Use editor here...
+    return 'got editor';
+  }
+  return 'no editor found';
+})()
+```
+
+### Insert Paragraph
+```javascript
+await editor.blocks.insert('paragraph', { text: 'Your paragraph text here.' });
+```
+
+### Insert Header (H1-H4)
+```javascript
+await editor.blocks.insert('header', { text: 'Your Header', level: 2 }); // level: 1-4
+```
+
+### Insert List
+```javascript
+await editor.blocks.insert('list', { style: 'unordered', items: ['Item 1', 'Item 2', 'Item 3'] });
+// style: 'unordered' (bullets) or 'ordered' (numbers)
+```
+
+### Insert Table
+```javascript
+await editor.blocks.insert('table', { content: [['Col A', 'Col B'], ['Val 1', 'Val 2'], ['Val 3', 'Val 4']] });
+```
+
+### Insert HTML Block
+```javascript
+await editor.blocks.insert('html', { html: '<div><b>Bold</b> HTML content</div>' });
+```
+
+### Insert Prism Block (table with data)
+```javascript
+await editor.blocks.insert('prism', {
+  columns: [
+    { name: 'col1', displayName: 'Column 1' },
+    { name: 'col2', displayName: 'Column 2' }
+  ],
+  data: [
+    { col1: 'value1', col2: 'value2' },
+    { col1: 'value3', col2: 'value4' }
+  ],
+  metadata: { displayName: 'Table Title', totalRows: 2 },
+  queryDef: { sql: 'SELECT * FROM table', modelName: 'model' } // optional, for live refresh
+});
+```
+
+### Insert Vega Block (chart/visualization)
+```javascript
+await editor.blocks.insert('vega', {
+  config: { chartType: 'bar', xAxis: { name: 'category' }, yAxis: { name: 'value' } },
+  vegaSpec: {
+    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+    "data": { "values": [{"category": "A", "value": 28}, {"category": "B", "value": 55}] },
+    "mark": "bar",
+    "encoding": {
+      "x": {"field": "category", "type": "nominal"},
+      "y": {"field": "value", "type": "quantitative"}
+    }
+  },
+  metadata: { displayName: 'Chart Title' }
+});
+```
+
+---
+
+## 22. READ REPORT BLOCKS
+
+**Verified working.** Reads the current block types and count from the editor.
+
+```javascript
+(async () => {
+  const editorHolder = document.getElementById('editorjs');
+  const ng = window.ng;
+  let reportComp = null;
+  let el = editorHolder;
+  while (el && !reportComp) {
+    try { const c = ng.getComponent(el); if (c && c.editor) { reportComp = c; break; } } catch(e) {}
+    el = el.parentElement;
+  }
+  if (reportComp && reportComp.editor) {
+    const data = await reportComp.editor.save();
+    return 'blocks=' + data.blocks.length + ': ' + data.blocks.map(b => b.type).join(', ');
+  }
+  return 'no editor';
+})()
+```
+
+---
+
+## 23. EDIT HTML BLOCK
+
+**Verified working.** HTML blocks toggle between preview and edit mode. Click preview to enter edit mode (shows textarea), blur to exit.
+
+```javascript
+// Enter edit mode - click the HTML preview
+document.querySelector('.html-block-preview')?.click();
+// Wait 500ms
+
+// Modify HTML content in the textarea
+const textarea = document.querySelector('.html-block-editor');
+textarea.value = '<h2>Updated HTML</h2><p>New content here</p>';
+textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+// Exit edit mode - blur the textarea
+textarea.blur();
+```
+
+---
+
+## 24. COPY PRISM TO REPORT (via clipboard paste simulation)
+
+The prism viewer's "Copy to report" button (`[data-qa="prism-copy-report-button"]`) copies a `PRISM_BLOCK:` prefixed JSON string to clipboard. When pasted into the report editor, the paste handler detects it and inserts a prism block.
+
+**If prism viewer is open:**
+```javascript
+// Click the copy-to-report button on the prism viewer
+document.querySelector('[data-qa="prism-copy-report-button"]')?.click();
+// Wait 500ms — data is now on clipboard
+// Then click on the report editor and paste (Ctrl+V)
+```
+
+**Programmatic alternative (no clipboard needed):**
+Use the Insert Prism Block method from section 21 above.
+
+---
+
+## 25. COPY VISUALIZATION TO REPORT
+
+The floating visualization's "Copy to report" button (`[data-qa="viz-copy-report-button"]`) copies a `VEGA_BLOCK:` prefixed JSON string to clipboard.
+
+**If visualization is open:**
+```javascript
+// Click the copy-to-report button on the visualization
+document.querySelector('[data-qa="viz-copy-report-button"]')?.click();
+// Wait 500ms — data is now on clipboard
+// Then click on the report editor and paste (Ctrl+V)
+```
+
+**Programmatic alternative (no clipboard needed):**
+Use the Insert Vega Block method from section 21 above.
+
+---
+
+## 26. GET REPORTS LIST
+
+**Verified working.** Returns all report items from the explorer.
+
+```javascript
+(() => {
+  const items = document.querySelectorAll('[data-qa="explorer-report-item"]');
+  const reports = Array.from(items).map((item, i) => ({
+    index: i,
+    name: item.querySelector('.report-name')?.textContent?.trim(),
+    isSelected: item.classList.contains('selected')
+  }));
+  return JSON.stringify(reports);
+})()
+```
+
+---
+
+## 27. SCROLL REPORTS EXPLORER INTO VIEW
+
+```javascript
+document.querySelector('.reports-explorer')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+```
+
+---
+
+## REPORT EDITOR ACTION BUTTONS
+
+| Selector | Action |
+|----------|--------|
+| `.report-title-bar .delete-btn` | Delete current report |
+| `.report-title-bar .refresh-btn` | Refresh prism/vega data |
+| `.report-title-bar .download-btn` | Download as PDF |
+| `.text-btn.new-btn` | Create new report (from editor) |
+| `.report-title-input` | Report title input field |
+
+## REPORT BLOCK TYPES
+
+| Type | Description | Data Shape |
+|------|-------------|------------|
+| `paragraph` | Text paragraph | `{ text: string }` |
+| `header` | Header (H1-H4) | `{ text: string, level: 1-4 }` |
+| `list` | Bulleted/numbered list | `{ style: 'unordered'|'ordered', items: string[] }` |
+| `table` | Editable table | `{ content: string[][] }` |
+| `html` | Raw HTML (click to edit) | `{ html: string }` |
+| `prism` | Prism data table | `{ columns, data, metadata, queryDef? }` |
+| `vega` | Vega-Lite chart | `{ config, vegaSpec, metadata }` |
+| `perspective` | Perspective viewer | `{ config, metadata }` |
+
+## REPORT COPY-TO-REPORT SELECTORS
+
+| Selector | Source |
+|----------|--------|
+| `[data-qa="prism-copy-report-button"]` | Prism viewer → copies PRISM_BLOCK: to clipboard |
+| `[data-qa="viz-copy-report-button"]` | Floating visualization → copies VEGA_BLOCK: to clipboard |
+
+## REPORT EXPLORER SELECTORS
+
+| Selector | Element |
+|----------|---------|
+| `[data-qa="explorer-reports-add"]` | Add new report button |
+| `[data-qa="explorer-reports-expand"]` | Expand/collapse reports list |
+| `[data-qa="explorer-report-item"]` | Report item in list |
+| `.report-name` | Report display name (inside item) |
+| `.reports-explorer` | Reports explorer container |
+
+## TIMING REFERENCE (Reports, verified on localhost)
+
+| Step | Duration |
+|------|----------|
+| Create Report | ~3s |
+| Rename Report | ~2s (includes auto-save) |
+| Delete Report (with confirm) | ~3s |
+| Insert Block (any type) | ~500ms |
+| Load Report Content | ~2s |
+| HTML Block toggle edit/preview | ~500ms |
 
 ## TEST DATA FILES
 
