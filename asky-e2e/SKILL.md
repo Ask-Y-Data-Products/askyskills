@@ -1,12 +1,59 @@
 ---
 name: asky-e2e
-description: Automate Asky data analytics platform UI testing using Claude Chrome extension (MCP browser tools). Covers login, project management, file upload, chat interaction, explorer navigation, table data reading, report creation/editing, and assertions. Use when testing the Asky platform via browser automation instead of Playwright.
-trigger: when the user wants to test or automate the Asky platform UI, prism, reports, or interact with asky app, run tests on asky, or automate browser actions on the stage.ask-y.ai site or when the user says, test this prism flow, test reports
+description: Automate Asky data analytics platform UI testing using Claude Chrome extension (MCP browser tools). Covers localhost dev setup, backend log observation, login, project management, file upload, chat interaction, explorer navigation, SpreadJS grid interaction, report creation/editing, and assertions.
+trigger: when the user wants to test or automate the Asky platform UI, prism, reports, or interact with asky app, run tests on asky, or automate browser actions on localhost or stage.ask-y.ai, or when the user says test this prism flow, test reports
 ---
 
 # Asky E2E Browser Automation Skill
 
-This skill provides **verified, tested** selectors and step-by-step procedures for automating the Asky data analytics platform using Claude Chrome extension MCP tools.
+**Default mode: localhost testing.** This skill covers running services locally, observing logs, and automating the Asky platform via Claude Chrome MCP tools.
+
+## LOCALHOST SETUP (Default)
+
+### Services & Ports
+
+| Service | Port | Path | Command |
+|---------|------|------|---------|
+| **asky.core** (ASP.NET Core API) | 5141 | `C:\work\asky\jam\jamback` | `dotnet run --project asky.core` |
+| **JamApi.Api** (Azure Functions) | 7071 | `C:\work\asky\jam\jamback\JamApi.Api` | `func start` |
+| **prismfront** (Angular) | 4200 | `C:\work\asky\prism\prismfront` | `npm start` |
+
+### Starting the Backend with Log Capture
+
+**Always capture logs to a file** — you cannot diagnose issues without them.
+
+```bash
+cd /c/work/asky/jam/jamback && dotnet run --project asky.core > /tmp/backend.log 2>&1 &
+```
+
+Verify it's running:
+```bash
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5141/api/auth/test
+# 404 = running. 000 = not running.
+```
+
+### Restarting the Backend
+
+DuckDB is in-memory — **every restart clears all DuckDB tables**. Tables reload from parquet on first access.
+
+```bash
+netstat -ano | grep ":5141" | grep LISTENING   # find PID
+taskkill //PID <pid> //F                        # kill it
+sleep 2 && cd /c/work/asky/jam/jamback && dotnet run --project asky.core > /tmp/backend.log 2>&1 &
+```
+
+### Log Observation
+
+**Always observe logs before and after any test action.** Never guess — read the actual error.
+
+```bash
+wc -l /tmp/backend.log                    # note line count BEFORE action
+# ... perform action in browser ...
+tail -n +<line+1> /tmp/backend.log        # read only NEW lines after action
+grep -i "error\|fail\|exception" /tmp/backend.log | tail -10  # scan for errors
+```
+
+The backend logs are noisy (Gmail polling, health checks). Filter with `grep -v` to exclude irrelevant services when scanning.
 
 ## PREREQUISITES
 
@@ -15,7 +62,7 @@ This skill provides **verified, tested** selectors and step-by-step procedures f
    ```bash
    NODE_PATH=/c/work/asky/prism/prismfront/node_modules node /c/work/asky/e2eTests/asky-e2e-framework/playwright-runner/tests/data/ws_file_bridge.js &
    ```
-3. **Default base URL**: Ask user — `https://stage.ask-y.ai`, `https://prism.ask-y.ai`, or `http://localhost:4200`.
+3. **Base URL**: `http://localhost:4200` (default) or `https://stage.ask-y.ai` / `https://prism.ask-y.ai`.
 4. **App is Angular SPA**: After login the URL is `{baseUrl}/studio`. All operations happen in that single page.
 
 ---
@@ -373,41 +420,44 @@ document.querySelector('[data-qa="semantic-status"]')?.textContent?.trim() === '
 
 ---
 
-## FULL E2E PATTERN
+## FULL E2E PATTERN (Localhost)
 
 ```
-1. Start WS bridge: node ws_file_bridge.js &
-2. Get tab context: tabs_context_mcp
-3. Navigate: {baseUrl}/login
-4. LOGIN (fill + click)
-5. CREATE PROJECT
-6. UPLOAD FILE via WebSocket bridge
-7. Wait for loading to finish
-8. SEND CHAT MESSAGE
-9. WAIT FOR CHAT IDLE
-10. CLICK ACCEPT ALL (if changes proposed)
-11. EXPAND ALL EXPLORER ITEMS
-12. READ EXCEL/PRISM TREES → verify results
-13. CREATE REPORT → verify in explorer
-14. RENAME REPORT → verify title updated
-15. INSERT BLOCKS (paragraph, header, list, table, html, prism, vega)
-16. READ REPORT BLOCKS → verify block types and count
-17. COPY PRISM/VIZ TO REPORT (if prism/viz open)
-18. DELETE REPORT → verify removed from explorer
-19. DELETE PROJECT (cleanup)
+0. Start backend: dotnet run --project asky.core > /tmp/backend.log 2>&1 &
+   Start frontend: npm start (in prismfront/, usually already running)
+   Start WS bridge: node ws_file_bridge.js & (if uploading files)
+1. Get tab context: tabs_context_mcp
+2. Navigate: http://localhost:4200/login
+3. LOGIN
+4. CREATE PROJECT or OPEN EXISTING
+5. UPLOAD FILE via WebSocket bridge (if needed)
+6. Wait for upload + semantic processing
+7. SEND CHAT MESSAGE → WAIT FOR CHAT IDLE
+8. CLICK ACCEPT ALL (if changes proposed)
+9. EXPAND ALL EXPLORER ITEMS
+10. READ EXCEL/PRISM TREES → verify results
+11. Test grid interactions (cell edits, row ops) via SpreadJS
+12. Observe backend logs after each action
+13. Test persistence: reload page, restart backend
+14. Report operations (create, insert blocks, rename, delete)
+15. DELETE PROJECT (cleanup)
 ```
 
-## TIMING REFERENCE (stage.ask-y.ai, verified)
+## TIMING REFERENCE
 
-| Step | Duration |
-|------|----------|
-| Login (credentials pre-filled) | ~5s |
-| Create Project | ~10s |
-| Upload File (20KB xlsx via WS) | ~15s |
-| Chat Message + Wait Idle | 10-300s |
-| Accept All Changes | ~2s |
-| Expand + Read Explorer | ~5s |
-| Delete Project | ~15s |
+| Step | localhost | stage.ask-y.ai |
+|------|----------|----------------|
+| Backend startup (`dotnet run`) | ~20s | N/A |
+| Login | ~3s | ~5s |
+| Create Project | ~5s | ~10s |
+| Upload File (20KB xlsx via WS) | ~10s | ~15s |
+| Chat Message + Wait Idle | 10-300s | 10-300s |
+| Accept All Changes | ~2s | ~2s |
+| Expand + Read Explorer | ~3s | ~5s |
+| Cell edit → parquet commit | ~8s | ~8s |
+| Backend restart + verify | ~25s | N/A |
+| Report operations | ~2-3s each | ~2-3s each |
+| Delete Project | ~10s | ~15s |
 
 ## KEY DATA-QA SELECTORS
 
@@ -798,3 +848,124 @@ Located in: `C:\work\asky\e2eTests\asky-e2e-framework\playwright-runner\tests\da
 | `BQ_nationalmenopauseshow2024.xlsx` | BigQuery data |
 | `Clay_People_1000.xlsx` | Clay CRM data |
 | `Campaign_Naming_Convention.txt` | Campaign naming doc |
+
+---
+
+## 28. SPREADJS GRID INTERACTION
+
+The data grid uses GrapeCity SpreadJS. Row 0 = header row. Data rows start at row 1.
+
+### Get SpreadJS Component
+```javascript
+(() => {
+  const spreadEl = document.querySelector('gc-spread-sheets');
+  if (!spreadEl) return null;
+  let el = spreadEl;
+  while (el) {
+    try { const c = window.ng.getComponent(el); if (c && c.spread) return c; } catch(e) {}
+    el = el.parentElement;
+  }
+  return null;
+})()
+```
+
+### Read All Grid Data
+```javascript
+(() => {
+  const spreadEl = document.querySelector('gc-spread-sheets');
+  let el = spreadEl, comp = null;
+  while (el) {
+    try { const c = window.ng.getComponent(el); if (c && c.spread) { comp = c; break; } } catch(e) {}
+    el = el.parentElement;
+  }
+  if (!comp) return 'No SpreadJS';
+  const sheet = comp.spread.getActiveSheet();
+  const rows = [];
+  for (let r = 0; r < sheet.getRowCount(); r++) {
+    const row = [];
+    for (let c = 0; c < sheet.getColumnCount(); c++) row.push(sheet.getValue(r, c));
+    rows.push(row);
+  }
+  return JSON.stringify(rows);
+})()
+```
+
+### Edit a Cell (Materialized Tables Only)
+```javascript
+sheet.setValue(1, 0, 'NEW_VALUE'); // row 1, col 0
+```
+Cell edits are debounced on both frontend and backend. Wait several seconds after editing before checking logs or reloading.
+
+### Read a Single Cell
+```javascript
+sheet.getValue(1, 0) // row, col
+```
+
+---
+
+## 29. NAVIGATING TO TABLES IN THE EXPLORER
+
+Clicking items in the explorer tree is unreliable with coordinates — the tree is dense. Use these methods in order of reliability:
+
+**Method 1 — Chat link (most reliable):** Click the `>` arrow next to a table name in the chat messages. This reliably opens the data grid viewer.
+
+**Method 2 — `find` tool:** `find "TABLE_NAME in AI Generated Tables"` then `double_click` the ref. The same name may appear in multiple locations (chat, explorer, prisms) — try different refs if the first doesn't open the viewer.
+
+**Method 3 — JS click:**
+```javascript
+(() => {
+  const items = document.querySelectorAll('.excel-file-item .table-name, .folder-table-name');
+  for (const item of items) {
+    if (item.textContent.trim().includes('TABLE_NAME')) {
+      item.closest('[data-qa="table-list-item"], .folder-table-item')?.click();
+      return 'clicked';
+    }
+  }
+  return 'not found';
+})()
+```
+
+**Verify table loaded:** `document.querySelector('gc-spread-sheets') ? 'Grid loaded' : 'No grid'`
+
+The "EDITABLE" badge appears for materialized tables.
+
+---
+
+## 30. TESTING METHODOLOGY
+
+### Diagnose Before Fixing
+
+**Never guess at code changes.** Always:
+1. Note log position before an action
+2. Perform ONE action in the browser
+3. Wait for async processes to complete
+4. Read only the NEW log lines
+5. Diagnose from the actual error, only then fix
+
+### Test Variations Systematically
+
+For any feature, always test this escalating sequence:
+
+| Scenario | Why |
+|----------|-----|
+| Single action, check result | Does it work at all? |
+| Page reload | Does the change survive in-session? |
+| Backend restart | Does the change survive across restarts? |
+| Rapid multiple actions | Does batching/debouncing work? |
+| Invalid input / wrong target | Does error handling work? |
+
+### UI Clicks vs JavaScript — Use Both
+
+JS (`setValue`, `click()`) is precise but can bypass UI event handlers that real users trigger. Always verify with UI clicks too:
+- Use `find` tool + `left_click` ref for buttons and tree items (coordinates are unreliable on dense UIs)
+- Use `double_click` + `type` + `key Enter` to simulate real user cell editing
+- Use JS `setValue()` only when you need precise, repeatable cell edits
+- After navigation or reload, `find` refs go stale — always re-find
+
+### Service Restart Testing
+
+When testing persistence or state management:
+1. Make a change and verify it took effect
+2. Reload the page — verify the change survives (tests in-memory/session state)
+3. Kill and restart the backend — verify again (tests durable storage)
+4. Each step that fails reveals a different layer of the bug
